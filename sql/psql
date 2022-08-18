@@ -1,0 +1,20 @@
+CREATE TABLE "polls" (
+  "id" bigserial PRIMARY KEY,
+  "title" text NOT NULL,
+  "description" text NOT NULL
+);
+
+CREATE TABLE "options" (
+  "id" bigserial PRIMARY KEY,
+  "title" text NOT NULL,
+  "poll_id" bigint NOT NULL
+);
+
+CREATE TABLE "votes" (
+  "ip" text PRIMARY KEY,
+  "option_id" bigint NOT NULL
+);
+
+ALTER TABLE "options" ADD FOREIGN KEY ("poll_id") REFERENCES "polls" ("id") ON DELETE CASCADE;
+
+ALTER TABLE "votes" ADD FOREIGN KEY ("option_id") REFERENCES "options" ("id") ON DELETE CASCADE;
