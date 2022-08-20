@@ -15,6 +15,12 @@ type Poll struct {
 	Voters      []string `json:"voters,omitempty"`
 }
 
+type Options struct {
+	ID     int64  `json:"id"`
+	Title  string `json:"title"`
+	PollID int64  `json:poll_id`
+}
+
 func (poll *Poll) ToJson() ([]byte, error) {
 	data, err := json.Marshal(poll)
 	if err != nil {
@@ -36,6 +42,13 @@ func CreatePoll(db *sql.DB, title string, description string, options []string) 
 	poll := &Poll{}
 	err := row.Scan(&poll.ID, &poll.Title, &poll.Description, &poll.Options)
 	return poll, err
+}
+
+func CreateOptions(db *sql.DB, title string, poll_id int64) (*Options, error) {
+	row := db.QueryRowContext(context.TODO(), "insert into options (title, poll_id) values ($1, $2) returning id, title", title, poll_id)
+	options := &Options{}
+	err := row.Scan(&options.ID, &options.Title)
+	return options, err
 }
 
 func ChoiceAndVote(db *sql.DB, pollID int64, optionid int64, ip string) error {

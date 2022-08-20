@@ -23,6 +23,7 @@ func main() {
 
 	r.Route("/poll", func(r chi.Router) {
 		r.Post("/", AddPoll)
+		r.Post("/", AddOptions)
 		r.Get("/", GetPoll)
 		r.Get("/all", GetPolls)
 		r.Post("/vote", Vote)
@@ -43,6 +44,19 @@ func AddPoll(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("content-type", "application/json")
 	json.NewEncoder(w).Encode(poll)
+
+}
+func AddOptions(w http.ResponseWriter, r *http.Request) {
+	addoptions := &db.Options{}
+	json.NewDecoder(r.Body).Decode(addoptions)
+
+	options, err := db.CreateOptions(pqsl, addoptions.Title, addoptions.PollID)
+	if err != nil {
+		w.Write([]byte("creating poll error: " + err.Error()))
+	}
+
+	w.Header().Set("content-type", "application/json")
+	json.NewEncoder(w).Encode(options)
 
 }
 
