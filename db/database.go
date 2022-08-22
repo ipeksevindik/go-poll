@@ -4,24 +4,24 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+
+	"github.com/lib/pq"
 )
 
-type Poll struct {
-	ID          int64    `json:"id"`
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Options     []string `json:"options"`
-	Votes       int      `json:"votes,omitempty"`
-	Voters      []string `json:"voters,omitempty"`
+type Polls struct {
+	ID          int64      `json:"id"`
+	Title       string     `json:"title"`
+	Description string     `json:"description"`
+	Options     []*Options `json:"options"`
 }
 
 type Options struct {
-	ID     int64  `json:"id"`
-	Title  string `json:"title"`
-	PollID int64  `json:poll_id`
+	ID    int64  `json:"id"`
+	Title string `json:"title"`
+	Vote  int64  `json:"vote,omitempty"`
 }
 
-func (poll *Poll) ToJson() ([]byte, error) {
+func (poll *Polls) ToJson() ([]byte, error) {
 	data, err := json.Marshal(poll)
 	if err != nil {
 		return nil, err
@@ -29,7 +29,7 @@ func (poll *Poll) ToJson() ([]byte, error) {
 	return data, nil
 }
 
-func (poll *Poll) FromJson(jsonstr string) error {
+func (poll *Polls) FromJson(jsonstr string) error {
 	err := json.Unmarshal([]byte(jsonstr), poll)
 	if err != nil {
 		return err
@@ -37,11 +37,11 @@ func (poll *Poll) FromJson(jsonstr string) error {
 	return nil
 }
 
-func CreatePoll(db *sql.DB, title string, description string, options []string) (*Poll, error) { // bunu düzelt
-	row := db.QueryRowContext(context.TODO(), "insert into poll (title, description) values ($1, $2) returning id, title, descriptions", title, description, options)
-	poll := &Poll{}
-	err := row.Scan(&poll.ID, &poll.Title, &poll.Description, &poll.Options)
-	return poll, err
+func CreatePoll(db *sql.DB, title string, description string) (int64, error) {
+	row := db.QueryRowContext(context.TODO(), "insert into polls (title, description) values ($1, $2) returning id", title, description)
+	var poll_id int64
+	err := row.Scan(&poll_id)
+	return poll_id, err
 }
 
 func CreateOptions(db *sql.DB, title string, poll_id int64) (*Options, error) {
@@ -51,29 +51,34 @@ func CreateOptions(db *sql.DB, title string, poll_id int64) (*Options, error) {
 	return options, err
 }
 
-func ChoiceAndVote(db *sql.DB, pollID int64, optionid int64, ip string) error {
-	row := db.QueryRowContext(context.TODO(), "select count(*) from votes where option_id = $1 and ip = $2 returning id", optionid, ip)
-	poll := &Poll{}
-	err := row.Scan(&poll.Votes)
-
-	return err
+func ChoiceAndVote(db *sql.DB, option_id int64, ip string) (string, error) {
+	row := db.QueryRowContext(context.TODO(), "insert into votes(ip, option_id) values ($1, $2) returning ip", ip, option_id)
+	err := row.Scan(&ip)
+	return ip, err
 }
 
-func GetPollVotes(db *sql.DB, id int64) (*Poll, error) {
-	row := db.QueryRowContext(context.TODO(), `select options.poll_id, json_object_agg(options.id,options.title), votes.ip as voter from options
-	inner join votes on votes.option_id = options.id where options.poll_id = $1`, id)
-
-	poll := &Poll{}
-	err := row.Scan(poll.ID, poll.Options, poll.Voters)
+func GetPollVotes(db *sql.DB, options []int64) (map[int64]int64, error) {
+	row, err := db.QueryContext(context.TODO(), "select option_id, count(ip) from votes where option_id = any($1) group by option_id", pq.Array(options))
 	if err != nil {
 		return nil, err
 	}
+	defer row.Close()
+	result := map[int64]int64{}
+	var id int64
+	var vote int64
+	for row.Next() {
+		err = row.Scan(&id, &vote)
+		if err != nil {
+			return nil, err
+		}
+		result[id] = vote
+	}
 
-	return poll, nil
+	return result, nil
 }
 
-func GetPolls(db *sql.DB) ([]*Poll, error) {
-	rows, err := db.QueryContext(context.TODO(), `select polls.title, description, json_object_agg(options.id,options.title) from polls 
+func GetPolls(db *sql.DB) ([]*Polls, error) {
+	rows, err := db.QueryContext(context.TODO(), `select polls.id, polls.title, polls.description, json_object_agg(options.id,options.title) from polls 
 	inner join options on options.poll_id = polls.id 
 	group by polls.id;`)
 	if err != nil {
@@ -81,27 +86,25 @@ func GetPolls(db *sql.DB) ([]*Poll, error) {
 	}
 	defer rows.Close()
 
-	var result []*Poll
+	var result []*Polls
 
 	for rows.Next() {
-		item := &Poll{}
-		err = rows.Scan(&item.Title, &item.Description, &item.Options)
+		item := &Polls{}
+		options := map[int]string{}
+		optionsBytes := json.RawMessage{}
+		err = rows.Scan(&item.ID, &item.Title, &item.Description, &optionsBytes)
 		if err != nil {
 			return nil, err
+		}
+		err = json.Unmarshal(optionsBytes, &options)
+		if err != nil {
+			return nil, err
+		}
+		for id, title := range options {
+			item.Options = append(item.Options, &Options{ID: int64(id), Title: title})
 		}
 		result = append(result, item)
 	}
 
 	return result, nil
-}
-
-func GetPoll(db *sql.DB, id int64) (*Poll, error) {
-	row := db.QueryRowContext(context.TODO(), "select id, title, description, options, votes from polls where id= $1", id)
-	poll := &Poll{}
-	err := row.Scan(poll.ID, poll.Title, poll.Description, poll.Options, poll.Votes)
-	if err != nil {
-		return nil, err
-	}
-
-	return poll, nil
 }

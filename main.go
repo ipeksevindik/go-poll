@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	_ "github.com/lib/pq"
 
@@ -22,41 +23,35 @@ func main() {
 	r := chi.NewRouter()
 
 	r.Route("/poll", func(r chi.Router) {
-		r.Post("/", AddPoll)
-		r.Post("/", AddOptions)
-		r.Get("/", GetPoll)
+		r.Post("/add", AddPoll)
 		r.Get("/all", GetPolls)
-		r.Post("/vote", Vote)
-		r.Get("/votes", GetPollVotes)
+		r.Patch("/", ChoicePoll)
 	})
 
 	http.ListenAndServe(":80", r)
 }
 
 func AddPoll(w http.ResponseWriter, r *http.Request) {
-	addpoll := &db.Poll{}
+	addpoll := &db.Polls{}
 	json.NewDecoder(r.Body).Decode(addpoll)
 
-	poll, err := db.CreatePoll(pqsl, addpoll.Title, addpoll.Description, addpoll.Options)
+	poll_id, err := db.CreatePoll(pqsl, addpoll.Title, addpoll.Description)
 	if err != nil {
 		w.Write([]byte("creating poll error: " + err.Error()))
 	}
 
-	w.Header().Set("content-type", "application/json")
-	json.NewEncoder(w).Encode(poll)
-
-}
-func AddOptions(w http.ResponseWriter, r *http.Request) {
-	addoptions := &db.Options{}
-	json.NewDecoder(r.Body).Decode(addoptions)
-
-	options, err := db.CreateOptions(pqsl, addoptions.Title, addoptions.PollID)
-	if err != nil {
-		w.Write([]byte("creating poll error: " + err.Error()))
+	for i, option := range addpoll.Options {
+		option, err := db.CreateOptions(pqsl, option.Title, poll_id)
+		if err != nil {
+			w.Write([]byte("creating poll error: " + err.Error()))
+			return
+		}
+		addpoll.Options[i] = option
 	}
 
+	addpoll.ID = poll_id
 	w.Header().Set("content-type", "application/json")
-	json.NewEncoder(w).Encode(options)
+	json.NewEncoder(w).Encode(addpoll)
 
 }
 
@@ -66,67 +61,40 @@ func GetPolls(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("error: " + err.Error()))
 	}
 
+	for _, poll := range polls {
+		option_ids := []int64{}
+		for _, option := range poll.Options {
+			option_ids = append(option_ids, option.ID)
+		}
+		votes, err := db.GetPollVotes(pqsl, option_ids)
+		if err != nil {
+			w.Write([]byte("error: " + err.Error()))
+		}
+		for _, option := range poll.Options {
+			option.Vote = votes[option.ID]
+		}
+
+	}
 	w.Header().Set("content-type", "application/json")
 	json.NewEncoder(w).Encode(polls)
 }
 
-func GetPoll(w http.ResponseWriter, r *http.Request) {
-	idStr := r.URL.Query().Get("id")
-	id, err := strconv.Atoi(idStr)
-	if err != nil {
-		w.Write([]byte("id is not a number"))
-		return
-	}
-
-	poll, err := db.GetPoll(pqsl, int64(id))
-	if err != nil {
-		w.Write([]byte("error: " + err.Error()))
-	}
-	w.Header().Set("content-type", "application/json")
-	json.NewEncoder(w).Encode(poll)
-}
-
-func GetPollVotes(w http.ResponseWriter, r *http.Request) {
-	idStr := r.URL.Query().Get("id")
-	id, err := strconv.Atoi(idStr)
-	if err != nil {
-		w.Write([]byte("id is not a number"))
-		return
-	}
-
-	poll, err := db.GetPollVotes(pqsl, int64(id))
-	if err != nil {
-		w.Write([]byte("error:"))
-		return
-	}
-	w.Header().Set("content-type", "application/json")
-	json.NewEncoder(w).Encode(poll)
-
-}
-
-func Vote(w http.ResponseWriter, r *http.Request) {
-	idStr := r.URL.Query().Get("id")
-	indexStr := r.URL.Query().Get("idx")
-
-	id, err := strconv.Atoi(idStr)
-	if err != nil {
-		w.Write([]byte("id is not a number"))
-		return
-	}
-
-	index, err := strconv.Atoi(indexStr)
-	if err != nil {
-		w.Write([]byte("index is not a number"))
-		return
-	}
-	poll := &db.Poll{}
-	json.NewDecoder(r.Body).Decode(poll)
-
-	err = db.ChoiceAndVote(pqsl, int64(id), int64(index), r.RemoteAddr)
+func ChoicePoll(w http.ResponseWriter, r *http.Request) {
+	voteStr := r.URL.Query().Get("v")
+	vote, err := strconv.Atoi(voteStr)
 	if err != nil {
 		w.Write([]byte(err.Error()))
 		return
 	}
+
+	splitted := strings.Split(r.RemoteAddr, ":")
+	choice, err := db.ChoiceAndVote(pqsl, int64(vote), splitted[0])
+	if err != nil {
+		w.Write([]byte("voted with the same ip"))
+	}
+
+	w.Header().Set("content-type", "application/json")
+	json.NewEncoder(w).Encode(choice)
 
 }
 
